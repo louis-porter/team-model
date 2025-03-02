@@ -5,14 +5,16 @@ from scipy.optimize import minimize
 from sklearn.model_selection import train_test_split
 from datetime import datetime, date
 
+
 class TeamModel:
-    def __init__(self):
+    def __init__(self, n_simulations=25):
 
         # Team attack and defense strength parameters
         self.team_attack = {}
         self.team_defense = {}
         self.home_advantage = 0.0
         self.rho = 0.0  # Dixon-Coles parameter to account for low scoring games
+        self.n_simulations = n_simulations
 
 
 
@@ -72,6 +74,9 @@ class TeamModel:
             home_goals = match['home_goals']
             away_goals = match['away_goals']
             match_season = match.get('season', current_season)
+
+            # resim weight
+            match_weight = match.get('weight', 1.0)
             
             # Weight calculation
             # Time weight - days-based decay
@@ -100,12 +105,15 @@ class TeamModel:
             # Calculate probability with rho adjustment
             probability = TeamModel.dc_probability(home_goals, away_goals, lambda_home, lambda_away, rho)
             
+            # combine time and resime match weight
+            combined_weight = time_weight * match_weight
+            
             # Safeguard against log(0)
             if probability <= 0:
                 probability = 1e-10
                 
             
-            log_likelihood += np.log(probability) * time_weight
+            log_likelihood += np.log(probability) * combined_weight
         
         # Constraint penalty
         constraint_penalty = 0
@@ -116,9 +124,21 @@ class TeamModel:
         
         return -log_likelihood + constraint_penalty
     
-    def _preprocess_matches(self, matches):
-        """Preprocess matches to optimize calculations."""
-        # Find reference date and current season
+    def _preprocess_matches(self, matches, days_ago=365):
+        """Preprocess matches to optimize calculations."""   
+        # Convert matches to DataFrame for date processing
+        matches_df = pd.DataFrame(matches)
+        matches_df["match_date"] = pd.to_datetime(matches_df["match_date"])
+        
+        # Filter by date
+        current_date = pd.Timestamp.now()
+        cutoff_date = current_date - pd.Timedelta(days=days_ago)
+        filtered_df = matches_df[matches_df["match_date"] >= cutoff_date]
+        
+        # Convert filtered DataFrame back to list of dictionaries
+        matches = filtered_df.to_dict('records')
+        
+        # Get reference date and current season
         dates = [m.get('match_date') for m in matches if m.get('match_date') is not None]
         seasons = [m.get('season', 0) for m in matches]
         
@@ -143,34 +163,90 @@ class TeamModel:
                     # Calculate and store days from reference
                     match['days_from_ref'] = max(0, (reference_date - match_date).days)
         
-        # Return metadata for optimization
+        # Return both filtered matches and metadata
         return {
+            'filtered_matches': matches,
             'reference_date': reference_date,
             'current_season': current_season
         }
         
 
+    def _resimulate_matches_with_xg(self, matches):
+        # Start with original matches
+        expanded_matches = matches.copy()
+        
+        print(f"Resimulating {len(matches)} matches ({self.n_simulations} simulations each)")
+        
+        # For each match in the original dataset
+        for match in matches:
+            # Extract xG values
+            home_xg = match.get('home_xg', 0)
+            away_xg = match.get('away_xg', 0)
+            
+            if home_xg == 0 or away_xg == 0:
+                continue  # Skip matches without xG data
+            
+            # Create n_simulations of this match
+            for i in range(self.n_simulations):
+                # Generate simulated goals using Poisson distribution
+                home_goals_sim = np.random.poisson(home_xg)
+                away_goals_sim = np.random.poisson(away_xg)
+                
+                # Create a copy of the original match
+                sim_match = match.copy()
+                
+                # Replace actual goals with simulated goals
+                sim_match['home_goals'] = home_goals_sim
+                sim_match['away_goals'] = away_goals_sim
+                
+                # Add simulation metadata
+                sim_match['is_simulation'] = True
+                sim_match['simulation_id'] = i
+                sim_match['weight'] = 1.0 / self.n_simulations
+                
+                # Add to expanded dataset
+                expanded_matches.append(sim_match)
+        
+        # Set weight for original matches
+        for match in expanded_matches:
+            if not match.get('is_simulation', False):
+                match['weight'] = 0
+        
+        print(f"Expanded from {len(matches)} to {len(expanded_matches)} matches")
+        return expanded_matches
+    
+
+
     def fit_models(self, actual_matches, epsilon=0.0065, season_penalty=0.75):
-        # Preprocess matches
-        matches_metadata = self._preprocess_matches(actual_matches)
+        # First preprocess matches to filter by date
+        preprocessing_result = self._preprocess_matches(actual_matches)
+        
+        # Extract filtered matches and metadata
+        filtered_matches = preprocessing_result.pop('filtered_matches')
+        matches_metadata = preprocessing_result
+        
+        # Then resimulate the filtered matches
+        resimulated_matches = self._resimulate_matches_with_xg(filtered_matches)
         
         # Get unique teams
-        teams = self._get_unique_teams(actual_matches)
+        teams = self._get_unique_teams(resimulated_matches)
         team_list = sorted(list(teams))
         
-        # Fit standard model with season penalty
-        standard_params = self._optimize_dc_parameters(
-            actual_matches, team_list, matches_metadata, epsilon, season_penalty
+        # Fit model with resimulated data and season penalty
+        params = self._optimize_dc_parameters(
+            resimulated_matches, team_list, matches_metadata, epsilon, season_penalty
         )
         
-        # Extract parameters for standard model
-        self.home_advantage = standard_params[0]
-        self.rho = standard_params[1]
+        # Extract parameters 
+        self.home_advantage = params[0]
+        self.rho = params[1]
         for i, team in enumerate(team_list):
-            self.team_attack[team] = standard_params[2+i]
-            self.team_defense[team] = standard_params[2+len(team_list)+i]
+            self.team_attack[team] = params[2+i]
+            self.team_defense[team] = params[2+len(team_list)+i]
         
         return self
+    
+
 
     def _optimize_dc_parameters(self, matches, team_list, metadata, epsilon=0.0065, season_penalty=0.75):
         """Optimize Dixon-Coles model parameters."""

@@ -117,9 +117,21 @@ class TeamModel:
         
         return -log_likelihood + constraint_penalty
     
-    def _preprocess_matches(self, matches):
-        """Preprocess matches to optimize calculations."""
-        # Find reference date and current season
+    def _preprocess_matches(self, matches, days_ago):
+        """Preprocess matches to optimize calculations."""   
+        # Convert matches to DataFrame for date processing
+        matches_df = pd.DataFrame(matches)
+        matches_df["match_date"] = pd.to_datetime(matches_df["match_date"])
+        
+        # Filter by date
+        current_date = max(matches_df["match_date"])
+        cutoff_date = current_date - pd.Timedelta(days=days_ago)
+        filtered_df = matches_df[matches_df["match_date"] >= cutoff_date]
+        
+        # Convert filtered DataFrame back to list of dictionaries
+        matches = filtered_df.to_dict('records')
+        
+        # Get reference date and current season
         dates = [m.get('match_date') for m in matches if m.get('match_date') is not None]
         seasons = [m.get('season', 0) for m in matches]
         
@@ -144,24 +156,29 @@ class TeamModel:
                     # Calculate and store days from reference
                     match['days_from_ref'] = max(0, (reference_date - match_date).days)
         
-        # Return metadata for optimization
+        # Return both filtered matches and metadata
         return {
+            'filtered_matches': matches,
             'reference_date': reference_date,
             'current_season': current_season
         }
         
 
-    def fit_models(self, actual_matches, epsilon=0.0065, season_penalty=0.75):
+    def fit_models(self, actual_matches, epsilon=0.0065, season_penalty=0.75, days_ago=999):
         # Preprocess matches
-        matches_metadata = self._preprocess_matches(actual_matches)
+        preprocessing_result = self._preprocess_matches(actual_matches, days_ago=days_ago)
+
+        # Extract filtered matches and metadata
+        filtered_matches = preprocessing_result.pop('filtered_matches')
+        matches_metadata = preprocessing_result
         
         # Get unique teams
-        teams = self._get_unique_teams(actual_matches)
+        teams = self._get_unique_teams(filtered_matches)
         team_list = sorted(list(teams))
         
         # Fit standard model with season penalty
         standard_params = self._optimize_dc_parameters(
-            actual_matches, team_list, matches_metadata, epsilon, season_penalty
+            filtered_matches, team_list, matches_metadata, epsilon, season_penalty
         )
         
         # Extract parameters for standard model
@@ -294,3 +311,5 @@ class TeamModel:
         lambda_away_std = self.team_attack[away_team] * self.team_defense[home_team]
         
         return {"home_team": home_team, "away_team": away_team, "home_goals": lambda_home_std, "away_goals": lambda_away_std}
+    
+
