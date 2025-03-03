@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from datetime import datetime, date
 
 
-class TeamModel:
+class xGTotalTeamModel:
     def __init__(self, n_simulations=25):
 
         # Team attack and defense strength parameters
@@ -103,7 +103,7 @@ class TeamModel:
             lambda_away = attack[away_team] * defense[home_team]
             
             # Calculate probability with rho adjustment
-            probability = TeamModel.dc_probability(home_goals, away_goals, lambda_home, lambda_away, rho)
+            probability = xGTotalTeamModel.dc_probability(home_goals, away_goals, lambda_home, lambda_away, rho)
             
             # combine time and resime match weight
             combined_weight = time_weight * match_weight
@@ -269,7 +269,7 @@ class TeamModel:
         
         # Minimize negative log-likelihood
         result = minimize(
-            lambda params: TeamModel.dc_log_likelihood(
+            lambda params: xGTotalTeamModel.dc_log_likelihood(
                 params, matches, team_list, metadata, 
                 epsilon=epsilon, season_penalty=season_penalty
             ),

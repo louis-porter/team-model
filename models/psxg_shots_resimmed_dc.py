@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from datetime import datetime, date
 
 
-class TeamModel:
+class PSxGShotsTeamModel:
     def __init__(self, n_simulations=25):
         # Team attack and defense strength parameters
         self.team_attack = {}
@@ -162,7 +162,7 @@ class TeamModel:
             lambda_away = attack[away_team] * defense[home_team]
             
             # Calculate probability with rho adjustment
-            probability = TeamModel.dc_probability(home_goals, away_goals, lambda_home, lambda_away, rho)
+            probability = PSxGShotsTeamModel.dc_probability(home_goals, away_goals, lambda_home, lambda_away, rho)
             
             # Safeguard against log(0)
             if probability <= 0:
@@ -275,7 +275,7 @@ class TeamModel:
         
         # Minimize negative log-likelihood
         result = minimize(
-            lambda params: TeamModel.dc_log_likelihood(
+            lambda params: PSxGShotsTeamModel.dc_log_likelihood(
                 params, matches, team_list, metadata, 
                 epsilon=epsilon, season_penalty=season_penalty
             ),

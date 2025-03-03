@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from datetime import datetime, date
 
 
-class TeamModel:
+class StandardTeamModel:
     def __init__(self):
 
         # Team attack and defense strength parameters
@@ -74,6 +74,7 @@ class TeamModel:
             away_goals = match['away_goals']
             match_season = match.get('season', current_season)
             
+            
             # Weight calculation
             # Time weight - days-based decay
             time_weight = 1.0
@@ -88,25 +89,32 @@ class TeamModel:
                     match_date = pd.Timestamp(match_date)
                 days_ago = max(0, (reference_date - match_date).days)
                 time_weight = 1.0 / (1.0 + epsilon * days_ago)
+
+            # Division weight
+            div_weight = 1
+            if match.get("division") == "EFL Championship":
+                div_weight = 0.65
             
             # Apply season penalty if match is from a previous season
             seasons_ago = current_season - match_season if current_season and match_season else 0
             if seasons_ago > 0:
                 time_weight *= season_penalty ** seasons_ago
             
+            combined_weight = time_weight * div_weight
+
             # Expected goals parameter
             lambda_home = attack[home_team] * defense[away_team] * home_advantage
             lambda_away = attack[away_team] * defense[home_team]
             
             # Calculate probability with rho adjustment
-            probability = TeamModel.dc_probability(home_goals, away_goals, lambda_home, lambda_away, rho)
+            probability = StandardTeamModel.dc_probability(home_goals, away_goals, lambda_home, lambda_away, rho)
             
             # Safeguard against log(0)
             if probability <= 0:
                 probability = 1e-10
                 
             
-            log_likelihood += np.log(probability) * time_weight
+            log_likelihood += np.log(probability) * combined_weight
         
         # Constraint penalty
         constraint_penalty = 0
@@ -211,7 +219,7 @@ class TeamModel:
         
         # Minimize negative log-likelihood
         result = minimize(
-            lambda params: TeamModel.dc_log_likelihood(
+            lambda params: StandardTeamModel.dc_log_likelihood(
                 params, matches, team_list, metadata, 
                 epsilon=epsilon, season_penalty=season_penalty
             ),
